@@ -1,0 +1,38 @@
+# Build artifacts
+/_build/
+/deps/
+
+# Elixir LS
+/.elixir_ls/
+
+# Node (caso adicione frontend depois)
+/node_modules/
+
+# Logs
+/logs/
+*.log
+
+# Runtime generated files
+/priv/static/
+/priv/repo/*.sqlite3
+
+# Environment files
+.env
+.env.*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+
+# Coverage
+/cover/
+
+# Erlang crash dump
+erl_crash.dump
+
+# Secrets
+config/prod.secret.exs
