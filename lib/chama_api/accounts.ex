@@ -1,22 +1,28 @@
-alias ChamaApi.Accounts.User
-alias ChamaApi.Repo
+defmodule ChamaApi.Accounts do
+  @moduledoc false
 
-def register_user(attrs) do
-  %User{}
-  |> User.registration_changeset(attrs)
-  |> Repo.insert()
-end
+  alias ChamaApi.Accounts.User
+  alias ChamaApi.Repo
 
-def authenticate_user(email, password) do
-  case Repo.get_by(User, email: email) do
-    nil ->
-      {:error, :invalid_credentials}
+  def register_user(attrs) do
+    %User{}
+    |> User.registration_changeset(attrs)
+    |> Repo.insert()
+  end
 
-    user ->
-      if Bcrypt.verify_pass(password, user.password_hash) do
-        {:ok, user}
-      else
+  def get_user(id), do: Repo.get(User, id)
+
+  def authenticate_user(email, password) do
+    case Repo.get_by(User, email: email) do
+      nil ->
         {:error, :invalid_credentials}
-      end
+
+      user ->
+        if Bcrypt.verify_pass(password, user.password_hash) do
+          {:ok, user}
+        else
+          {:error, :invalid_credentials}
+        end
+    end
   end
 end

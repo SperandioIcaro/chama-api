@@ -1,38 +1,53 @@
-# Build artifacts
+cat > .gitignore <<'EOF'
+# ===== Elixir / Mix =====
 /_build/
 /deps/
+/cover/
+/doc/
+/tmp/
+/erl_crash.dump
+*.ez
 
-# Elixir LS
-/.elixir_ls/
+# ===== Phoenix / Assets =====
+/priv/static/assets/
+/priv/static/cache_manifest.json
 
-# Node (caso adicione frontend depois)
-/node_modules/
+# (se tiver node dentro do projeto)
+assets/node_modules/
+assets/.parcel-cache/
+assets/dist/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
 
-# Logs
-/logs/
-*.log
-
-# Runtime generated files
-/priv/static/
-/priv/repo/*.sqlite3
-
-# Environment files
+# ===== Environment / Secrets =====
 .env
 .env.*
+/config/*.secret.exs
+/config/dev.secret.exs
+/config/prod.secret.exs
+/config/runtime.exs.secret
+/secrets/
+*.pem
+*.key
 
-# OS files
+# ===== OS / Editor =====
 .DS_Store
 Thumbs.db
 
-# Editor
+# VS Code
 .vscode/
+
+# JetBrains
 .idea/
 
-# Coverage
-/cover/
+# ===== Logs =====
+*.log
 
-# Erlang crash dump
-erl_crash.dump
+# ===== ElixirLS =====
+.elixir_ls/
 
-# Secrets
-config/prod.secret.exs
+# ===== asdf =====
+.tool-versions
+EOF

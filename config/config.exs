@@ -42,3 +42,7 @@ config :phoenix, :json_library, Jason
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.
 import_config "#{config_env()}.exs"
+
+config :chama_api, ChamaApi.Auth.Guardian,
+  issuer: "chama_api",
+  secret_key: System.get_env("GUARDIAN_SECRET_KEY") || "dev_secret_change_me"
