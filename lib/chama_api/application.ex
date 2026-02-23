@@ -12,6 +12,7 @@ defmodule ChamaApi.Application do
       ChamaApi.Repo,
       {DNSCluster, query: Application.get_env(:chama_api, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: ChamaApi.PubSub},
+      ChamaApiWeb.Presence,
       # Start a worker by calling: ChamaApi.Worker.start_link(arg)
       # {ChamaApi.Worker, arg},
       # Start to serve requests, typically the last entry

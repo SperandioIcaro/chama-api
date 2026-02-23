@@ -121,6 +121,27 @@ defmodule ChamaApi.Rooms do
 
   def get_room_by_code(code), do: Repo.get_by(Room, code: code)
 
+  def get_room_by_code_active(code) do
+    case Repo.get_by(Room, code: code) do
+      nil ->
+        {:error, :not_found}
+
+      %Room{is_active: true} = room ->
+        {:ok, room}
+
+      %Room{} ->
+        {:error, :room_inactive}
+    end
+  end
+
+  def ensure_participant_active(room_id, user_id) do
+    case Repo.get_by(Participant, room_id: room_id, user_id: user_id) do
+      nil -> {:error, :not_participant}
+      %Participant{left_at: nil} -> :ok
+      %Participant{} -> {:error, :not_participant}
+    end
+  end
+
   def create_room(attrs, created_by \\ nil) do
     %Room{}
     |> Room.create_changeset(attrs)
