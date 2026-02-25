@@ -19,14 +19,28 @@ defmodule ChamaApiWeb.RoomController do
     json(conn, %{room: room_json(room)})
   end
 
-  def create(conn, params) do
+  # ✅ FIX REAL: pattern match em "room" e passa apenas room_params pro context.
+  def create(conn, %{"room" => room_params}) do
     user = Guardian.Plug.current_resource(conn)
 
-    with {:ok, %Room{} = room} <- Rooms.create_room(params, user) do
+    with {:ok, %Room{} = room} <- Rooms.create_room(room_params, user) do
       conn
       |> put_status(:created)
       |> json(%{message: "room_created", room: room_json(room)})
     end
+  end
+
+  # se vier payload errado, devolve 422 amigável
+  def create(conn, _params) do
+    conn
+    |> put_status(:unprocessable_entity)
+    |> json(%{
+      error: "validation_error",
+      message: "Alguns campos estão inválidos. Corrija e tente novamente.",
+      status: 422,
+      fields: %{room: ["é obrigatório (envie no formato { room: { name: \"...\" } })"]},
+      how_to_fix: "Envie o payload no formato correto."
+    })
   end
 
   def update(conn, %{"id" => id} = params) do
@@ -57,9 +71,9 @@ defmodule ChamaApiWeb.RoomController do
           how_to_fix: "Confira o código e tente novamente."
         })
 
-      room ->
+      %Room{} = room ->
         if room.is_active do
-          json(conn, %{room: serialize_room(room)})
+          json(conn, %{room: room_json(room)})
         else
           conn
           |> put_status(:gone)
@@ -73,63 +87,6 @@ defmodule ChamaApiWeb.RoomController do
     end
   end
 
-  def leave(conn, %{"code" => code}) do
-    user = Guardian.Plug.current_resource(conn)
-
-    with %Room{} = room <- Rooms.get_room_by_code(code),
-         true <- room.is_active || {:error, :room_inactive},
-         {:ok, _participant} <- Rooms.leave_room(room, user) do
-      json(conn, %{message: "left"})
-    else
-      nil -> conn |> put_status(:not_found) |> json(%{error: "room_not_found"})
-      {:error, :room_inactive} -> conn |> put_status(:gone) |> json(%{error: "room_inactive"})
-      {:error, :not_in_room} -> conn |> put_status(:conflict) |> json(%{error: "not_in_room"})
-    end
-  end
-
-  def participants_by_code(conn, %{"code" => code}) do
-    with %Room{} = room <- Rooms.get_room_by_code(code) do
-      participants = Rooms.list_active_participants(room.id)
-
-      json(conn, %{
-        room: %{id: room.id, code: room.code, name: room.name},
-        participants:
-          Enum.map(participants, fn p ->
-            %{
-              id: p.id,
-              user_id: p.user_id,
-              role: p.role,
-              joined_at: p.joined_at
-            }
-          end)
-      })
-    else
-      nil -> conn |> put_status(:not_found) |> json(%{error: "room_not_found"})
-    end
-  end
-
-  defp serialize_room(room) do
-    %{
-      id: room.id,
-      name: room.name,
-      code: room.code,
-      is_active: room.is_active,
-      created_by_id: room.created_by_id,
-      inserted_at: room.inserted_at
-    }
-  end
-
-  defp room_json(room) do
-    %{
-      id: room.id,
-      name: room.name,
-      code: room.code,
-      is_active: room.is_active,
-      created_by_id: room.created_by_id,
-      inserted_at: room.inserted_at
-    }
-  end
-
   def join(conn, %{"code" => code}) do
     user = Guardian.Plug.current_resource(conn)
 
@@ -137,7 +94,7 @@ defmodule ChamaApiWeb.RoomController do
       {:ok, room, participant} ->
         json(conn, %{
           message: "joined",
-          room: room_to_json(room),
+          room: room_json(room),
           participant: %{
             id: participant.id,
             role: participant.role,
@@ -179,7 +136,51 @@ defmodule ChamaApiWeb.RoomController do
     end
   end
 
-  defp room_to_json(room) do
+  def leave(conn, %{"code" => code}) do
+    user = Guardian.Plug.current_resource(conn)
+
+    with %Room{} = room <- Rooms.get_room_by_code(code),
+         true <- room.is_active || {:error, :room_inactive},
+         {:ok, _participant} <- Rooms.leave_room(room, user) do
+      json(conn, %{message: "left"})
+    else
+      nil ->
+        conn |> put_status(:not_found) |> json(%{error: "room_not_found"})
+
+      {:error, :room_inactive} ->
+        conn |> put_status(:gone) |> json(%{error: "room_inactive"})
+
+      {:error, :not_in_room} ->
+        conn |> put_status(:conflict) |> json(%{error: "not_in_room"})
+    end
+  end
+
+  def participants_by_code(conn, %{"code" => code}) do
+    with %Room{} = room <- Rooms.get_room_by_code(code) do
+      participants = Rooms.list_active_participants(room.id)
+
+      json(conn, %{
+        room: %{id: room.id, code: room.code, name: room.name},
+        participants:
+          Enum.map(participants, fn p ->
+            %{
+              id: p.id,
+              user_id: p.user_id,
+              role: p.role,
+              joined_at: p.joined_at
+            }
+          end)
+      })
+    else
+      nil ->
+        conn |> put_status(:not_found) |> json(%{error: "room_not_found"})
+    end
+  end
+
+  # --------------------
+  # JSON helpers
+  # --------------------
+  defp room_json(room) do
     %{
       id: room.id,
       name: room.name,

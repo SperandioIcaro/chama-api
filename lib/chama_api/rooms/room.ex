@@ -4,6 +4,7 @@ defmodule ChamaApi.Rooms.Room do
 
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
+
   schema "rooms" do
     field :name, :string
     field :code, :string
@@ -14,19 +15,41 @@ defmodule ChamaApi.Rooms.Room do
     timestamps(type: :utc_datetime_usec)
   end
 
+  @name_min 2
+  @name_max 60
+
+  @doc """
+  Changeset de criação:
+  - valida nome
+  - gera code caso não exista
+  - mantém is_active opcional (default do schema)
+  """
   def create_changeset(room, attrs) do
     room
-    |> cast(attrs, [:name])
+    |> cast(attrs, [:name, :is_active])
     |> validate_required([:name])
-    |> validate_length(:name, min: 2, max: 60)
-    |> put_change(:code, gen_code())
+    |> validate_length(:name, min: @name_min, max: @name_max)
+    |> put_code_if_missing()
     |> unique_constraint(:code)
   end
 
+  @doc """
+  Changeset de update:
+  - permite alterar name e is_active
+  - name opcional aqui, mas se vier, valida
+  """
   def update_changeset(room, attrs) do
     room
     |> cast(attrs, [:name, :is_active])
-    |> validate_length(:name, min: 2, max: 60)
+    |> validate_length(:name, min: @name_min, max: @name_max)
+  end
+
+  defp put_code_if_missing(changeset) do
+    case get_field(changeset, :code) do
+      nil -> put_change(changeset, :code, gen_code())
+      "" -> put_change(changeset, :code, gen_code())
+      _ -> changeset
+    end
   end
 
   defp gen_code do
