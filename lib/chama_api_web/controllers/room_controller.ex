@@ -19,18 +19,20 @@ defmodule ChamaApiWeb.RoomController do
     json(conn, %{room: room_json(room)})
   end
 
-  # ✅ FIX REAL: pattern match em "room" e passa apenas room_params pro context.
   def create(conn, %{"room" => room_params}) do
-    user = Guardian.Plug.current_resource(conn)
+    case Guardian.Plug.current_resource(conn) do
+      nil ->
+        unauthorized(conn)
 
-    with {:ok, %Room{} = room} <- Rooms.create_room(room_params, user) do
-      conn
-      |> put_status(:created)
-      |> json(%{message: "room_created", room: room_json(room)})
+      user ->
+        with {:ok, %Room{} = room} <- Rooms.create_room(room_params, user) do
+          conn
+          |> put_status(:created)
+          |> json(%{message: "room_created", room: room_json(room)})
+        end
     end
   end
 
-  # se vier payload errado, devolve 422 amigável
   def create(conn, _params) do
     conn
     |> put_status(:unprocessable_entity)
@@ -88,70 +90,90 @@ defmodule ChamaApiWeb.RoomController do
   end
 
   def join(conn, %{"code" => code}) do
-    user = Guardian.Plug.current_resource(conn)
+    case Guardian.Plug.current_resource(conn) do
+      nil ->
+        unauthorized(conn)
 
-    case Rooms.join_room_by_code(code, user) do
-      {:ok, room, participant} ->
-        json(conn, %{
-          message: "joined",
-          room: room_json(room),
-          participant: %{
-            id: participant.id,
-            role: participant.role,
-            user_id: participant.user_id,
-            joined_at: participant.inserted_at
-          }
-        })
+      user ->
+        case Rooms.join_room_by_code(code, user) do
+          {:ok, room, participant} ->
+            joined_at =
+              cond do
+                Map.has_key?(participant, :joined_at) and not is_nil(participant.joined_at) ->
+                  participant.joined_at
 
-      {:error, :room_not_found} ->
-        conn
-        |> put_status(:not_found)
-        |> json(%{
-          error: "room_not_found",
-          message: "Nenhuma sala encontrada com esse código.",
-          status: 404,
-          how_to_fix: "Confira o código e tente novamente."
-        })
+                Map.has_key?(participant, :inserted_at) and not is_nil(participant.inserted_at) ->
+                  participant.inserted_at
 
-      {:error, :room_inactive, _room} ->
-        conn
-        |> put_status(:gone)
-        |> json(%{
-          error: "room_inactive",
-          message: "Essa sala existe, mas está desativada.",
-          status: 410,
-          how_to_fix: "Peça para o criador reativar ou crie uma nova sala."
-        })
+                true ->
+                  DateTime.utc_now()
+              end
 
-      {:error, :already_joined, _changeset} ->
-        conn
-        |> put_status(:conflict)
-        |> json(%{
-          error: "already_joined",
-          message: "Você já está nessa sala.",
-          status: 409,
-          how_to_fix:
-            "Se quiser entrar de novo, implemente um endpoint de sair (leave) e tente novamente."
-        })
+            json(conn, %{
+              message: "joined",
+              room: room_json(room),
+              participant: %{
+                id: participant.id,
+                role: participant.role,
+                user_id: participant.user_id,
+                joined_at: joined_at
+              }
+            })
+
+          {:error, :room_not_found} ->
+            conn
+            |> put_status(:not_found)
+            |> json(%{
+              error: "room_not_found",
+              message: "Nenhuma sala encontrada com esse código.",
+              status: 404,
+              how_to_fix: "Confira o código e tente novamente."
+            })
+
+          {:error, :room_inactive, _room} ->
+            conn
+            |> put_status(:gone)
+            |> json(%{
+              error: "room_inactive",
+              message: "Essa sala existe, mas está desativada.",
+              status: 410,
+              how_to_fix: "Peça para o criador reativar ou crie uma nova sala."
+            })
+
+          {:error, :already_joined, _changeset} ->
+            conn
+            |> put_status(:conflict)
+            |> json(%{
+              error: "already_joined",
+              message: "Você já está nessa sala.",
+              status: 409,
+              how_to_fix:
+                "Se quiser entrar de novo, implemente um endpoint de sair (leave) e tente novamente."
+            })
+        end
     end
   end
 
   def leave(conn, %{"code" => code}) do
-    user = Guardian.Plug.current_resource(conn)
-
-    with %Room{} = room <- Rooms.get_room_by_code(code),
-         true <- room.is_active || {:error, :room_inactive},
-         {:ok, _participant} <- Rooms.leave_room(room, user) do
-      json(conn, %{message: "left"})
-    else
+    case Guardian.Plug.current_resource(conn) do
       nil ->
-        conn |> put_status(:not_found) |> json(%{error: "room_not_found"})
+        unauthorized(conn)
 
-      {:error, :room_inactive} ->
-        conn |> put_status(:gone) |> json(%{error: "room_inactive"})
+      user ->
+        with %Room{} = room <- Rooms.get_room_by_code(code),
+             true <- room.is_active || {:error, :room_inactive},
+             {:ok, _participant} <- Rooms.leave_room(room, user) do
+          json(conn, %{message: "left"})
+        else
+          nil ->
+            conn |> put_status(:not_found) |> json(%{error: "room_not_found"})
 
-      {:error, :not_in_room} ->
-        conn |> put_status(:conflict) |> json(%{error: "not_in_room"})
+          {:error, :room_inactive} ->
+            conn |> put_status(:gone) |> json(%{error: "room_inactive"})
+
+          {:error, :not_in_room} ->
+            conn |> put_status(:conflict) |> json(%{error: "not_in_room"})
+        end
     end
   end
 
@@ -163,11 +185,18 @@ defmodule ChamaApiWeb.RoomController do
         room: %{id: room.id, code: room.code, name: room.name},
         participants:
           Enum.map(participants, fn p ->
+            joined_at =
+              cond do
+                Map.has_key?(p, :joined_at) and not is_nil(p.joined_at) -> p.joined_at
+                Map.has_key?(p, :inserted_at) and not is_nil(p.inserted_at) -> p.inserted_at
+                true -> nil
+              end
+
             %{
               id: p.id,
               user_id: p.user_id,
               role: p.role,
-              joined_at: p.joined_at
+              joined_at: joined_at
             }
           end)
       })
@@ -178,8 +207,19 @@ defmodule ChamaApiWeb.RoomController do
   end
 
   # --------------------
-  # JSON helpers
+  # helpers
   # --------------------
+  defp unauthorized(conn) do
+    conn
+    |> put_status(:unauthorized)
+    |> json(%{
+      error: "unauthorized",
+      message: "Você precisa estar autenticado para fazer isso.",
+      status: 401,
+      how_to_fix: "Envie o token JWT no header Authorization: Bearer <token>."
+    })
+  end
+
   defp room_json(room) do
     %{
       id: room.id,

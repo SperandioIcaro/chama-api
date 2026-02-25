@@ -6,24 +6,28 @@ defmodule ChamaApiWeb.RoomChannel do
 
   @impl true
   def join("room:" <> code, _payload, socket) do
-    user = socket.assigns.current_user
+    case socket.assigns[:current_user] do
+      nil ->
+        {:error, %{reason: "unauthorized"}}
 
-    with {:ok, room} <- Rooms.get_room_by_code_active(code),
-         :ok <- Rooms.ensure_participant_active(room.id, user.id) do
-      send(self(), {:after_join, room.id, user.id})
+      user ->
+        with {:ok, room} <- Rooms.get_room_by_code_active(code),
+             :ok <- Rooms.ensure_participant_active(room.id, user.id) do
+          send(self(), {:after_join, room.id, user.id})
 
-      socket =
-        socket
-        |> assign(:room_id, room.id)
-        |> assign(:room_code, room.code)
-        |> assign(:user_id, user.id)
+          socket =
+            socket
+            |> assign(:room_id, room.id)
+            |> assign(:room_code, room.code)
+            |> assign(:user_id, user.id)
 
-      {:ok, %{room: %{id: room.id, code: room.code}}, socket}
-    else
-      {:error, :not_found} -> {:error, %{reason: "room_not_found"}}
-      {:error, :expired} -> {:error, %{reason: "room_expired"}}
-      {:error, :not_participant} -> {:error, %{reason: "not_participant"}}
-      other -> {:error, %{reason: "join_failed", detail: inspect(other)}}
+          {:ok, %{room: %{id: room.id, code: room.code}}, socket}
+        else
+          {:error, :not_found} -> {:error, %{reason: "room_not_found"}}
+          {:error, :expired} -> {:error, %{reason: "room_expired"}}
+          {:error, :not_participant} -> {:error, %{reason: "not_participant"}}
+          other -> {:error, %{reason: "join_failed", detail: inspect(other)}}
+        end
     end
   end
 
@@ -40,17 +44,10 @@ defmodule ChamaApiWeb.RoomChannel do
   end
 
   # =========================
-  # Signaling (tolerante)
+  # Chat
   # =========================
 
-  # Aceita formatos:
-  # 1) %{"to" => "user_id", "payload" => %{"sdp" => %{...}}}
-  # 2) %{"to" => "user_id", "sdp" => %{...}}
-  # 3) %{"payload" => %{"sdp" => %{...}}}  (broadcast)
-  # 4) %{"sdp" => %{...}}                 (broadcast)
   @impl true
-  # lib/.../room_channel.ex
-
   def handle_in("chat:new", %{"body" => body, "user_name" => user_name}, socket) do
     body = String.trim(body || "")
     user_name = String.trim(user_name || "")
@@ -73,16 +70,20 @@ defmodule ChamaApiWeb.RoomChannel do
     end
   end
 
+  # =========================
+  # Signaling (tolerante)
+  # =========================
+
+  @impl true
+  def handle_in("signal:offer", payload, socket) do
+    relay_sdp("signal:offer", payload, socket)
+  end
+
   @impl true
   def handle_in("signal:answer", payload, socket) do
     relay_sdp("signal:answer", payload, socket)
   end
 
-  # Aceita formatos:
-  # 1) %{"to" => "user_id", "payload" => %{"candidate" => %{...}}}
-  # 2) %{"to" => "user_id", "candidate" => %{...}}
-  # 3) %{"payload" => %{"candidate" => %{...}}} (broadcast)
-  # 4) %{"candidate" => %{...}}                (broadcast)
   @impl true
   def handle_in("signal:ice", payload, socket) do
     relay_candidate("signal:ice", payload, socket)

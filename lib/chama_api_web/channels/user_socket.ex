@@ -2,6 +2,7 @@ defmodule ChamaApiWeb.UserSocket do
   use Phoenix.Socket
 
   channel "room:*", ChamaApiWeb.RoomChannel
+  channel "lobby:*", ChamaApiWeb.LobbyChannel
 
   @impl true
   def connect(%{"token" => token}, socket, _connect_info) when is_binary(token) do
