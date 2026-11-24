@@ -5,10 +5,14 @@ defmodule ChamaApi.Rooms.Room do
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
 
+  @kinds ["general", "private"]
+
   schema "rooms" do
     field :name, :string
     field :code, :string
     field :is_active, :boolean, default: true
+    # "general" (mural aberto, só existe uma) | "private" (entra com convite/código)
+    field :kind, :string, default: "private"
 
     belongs_to :created_by, ChamaApi.Accounts.User, foreign_key: :created_by_id
 
@@ -18,29 +22,26 @@ defmodule ChamaApi.Rooms.Room do
   @name_min 2
   @name_max 60
 
+  def kinds, do: @kinds
+
   @doc """
-  Changeset de criação:
-  - valida nome
-  - gera code caso não exista
-  - mantém is_active opcional (default do schema)
+  Changeset de criação (sempre sala privada — a sala geral é criada pelo
+  sistema, nunca por parâmetros vindos do cliente).
   """
   def create_changeset(room, attrs) do
     room
-    |> cast(attrs, [:name, :is_active])
+    |> cast(attrs, [:name])
+    |> update_change(:name, &String.trim/1)
     |> validate_required([:name])
     |> validate_length(:name, min: @name_min, max: @name_max)
     |> put_code_if_missing()
     |> unique_constraint(:code)
   end
 
-  @doc """
-  Changeset de update:
-  - permite alterar name e is_active
-  - name opcional aqui, mas se vier, valida
-  """
   def update_changeset(room, attrs) do
     room
     |> cast(attrs, [:name, :is_active])
+    |> update_change(:name, &String.trim/1)
     |> validate_length(:name, min: @name_min, max: @name_max)
   end
 
@@ -52,8 +53,8 @@ defmodule ChamaApi.Rooms.Room do
     end
   end
 
+  # 48 bits aleatórios: o código funciona como "link de convite" da sala privada.
   defp gen_code do
-    # curto, humano e único o bastante pra MVP
     Base.url_encode64(:crypto.strong_rand_bytes(6), padding: false)
   end
 end

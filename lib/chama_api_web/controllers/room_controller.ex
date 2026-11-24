@@ -5,229 +5,253 @@ defmodule ChamaApiWeb.RoomController do
 
   alias ChamaApi.Rooms
   alias ChamaApi.Rooms.Room
+  alias ChamaApiWeb.Serializers
 
+  # GET /api/rooms — sala geral + salas privadas em que eu estou
   def index(conn, _params) do
-    rooms = Rooms.list_rooms()
+    user = current_user(conn)
+    rooms = Rooms.list_rooms_for(user)
+    counts = Rooms.participant_counts(Enum.map(rooms, & &1.id))
 
     json(conn, %{
-      rooms: Enum.map(rooms, &room_json/1)
+      rooms:
+        Enum.map(rooms, fn room ->
+          Serializers.room(room,
+            user: user,
+            participants_count: Map.get(counts, room.id, 0)
+          )
+        end)
     })
+  end
+
+  # GET /api/rooms/general
+  def general(conn, _params) do
+    user = current_user(conn)
+    json(conn, %{room: Serializers.room(Rooms.ensure_general_room(), user: user)})
   end
 
   def show(conn, %{"id" => id}) do
-    room = Rooms.get_room!(id)
-    json(conn, %{room: room_json(room)})
-  end
+    user = current_user(conn)
 
-  def create(conn, %{"room" => room_params}) do
-    case Guardian.Plug.current_resource(conn) do
-      nil ->
-        unauthorized(conn)
-
-      user ->
-        with {:ok, %Room{} = room} <- Rooms.create_room(room_params, user) do
-          conn
-          |> put_status(:created)
-          |> json(%{message: "room_created", room: room_json(room)})
-        end
+    with {:ok, room} <- fetch_visible_room(id, user) do
+      json(conn, %{room: Serializers.room(room, user: user)})
     end
   end
 
-  def create(conn, _params) do
-    conn
-    |> put_status(:unprocessable_entity)
-    |> json(%{
-      error: "validation_error",
-      message: "Alguns campos estão inválidos. Corrija e tente novamente.",
-      status: 422,
-      fields: %{room: ["é obrigatório (envie no formato { room: { name: \"...\" } })"]},
-      how_to_fix: "Envie o payload no formato correto."
-    })
+  # POST /api/rooms  { room: { name } } — sempre cria sala privada
+  def create(conn, %{"room" => room_params}) when is_map(room_params) do
+    user = current_user(conn)
+
+    with {:ok, %Room{} = room} <- Rooms.create_room(room_params, user) do
+      conn
+      |> put_status(:created)
+      |> json(%{
+        message: "room_created",
+        room: Serializers.room(room, user: user, participants_count: 1)
+      })
+    end
   end
 
+  def create(_conn, _params), do: {:error, :room_payload_required}
+
+  # PATCH /api/rooms/:id — só o dono
   def update(conn, %{"id" => id} = params) do
-    room = Rooms.get_room!(id)
+    user = current_user(conn)
+    attrs = Map.get(params, "room", params)
 
-    with {:ok, %Room{} = room} <- Rooms.update_room(room, Map.drop(params, ["id"])) do
-      json(conn, %{message: "room_updated", room: room_json(room)})
+    with {:ok, room} <- fetch_owned_room(id, user),
+         {:ok, %Room{} = room} <- Rooms.update_room(room, attrs) do
+      json(conn, %{message: "room_updated", room: Serializers.room(room, user: user)})
     end
   end
 
+  # DELETE /api/rooms/:id — só o dono
   def delete(conn, %{"id" => id}) do
-    room = Rooms.get_room!(id)
+    user = current_user(conn)
 
-    with {:ok, %Room{}} <- Rooms.delete_room(room) do
+    with {:ok, room} <- fetch_owned_room(id, user),
+         {:ok, %Room{}} <- Rooms.delete_room(room) do
       json(conn, %{message: "room_deleted"})
     end
   end
 
   def by_code(conn, %{"code" => code}) do
-    case Rooms.get_room_by_code(code) do
-      nil ->
-        conn
-        |> put_status(:not_found)
-        |> json(%{
-          error: "room_not_found",
-          message: "Nenhuma sala encontrada com esse código.",
-          status: 404,
-          how_to_fix: "Confira o código e tente novamente."
-        })
+    user = current_user(conn)
 
-      %Room{} = room ->
-        if room.is_active do
-          json(conn, %{room: room_json(room)})
-        else
-          conn
-          |> put_status(:gone)
-          |> json(%{
-            error: "room_inactive",
-            message: "Essa sala existe, mas está desativada.",
-            status: 410,
-            how_to_fix: "Peça para o criador reativar ou crie uma nova sala."
-          })
-        end
+    with {:ok, room} <- Rooms.get_room_by_code_active(code) do
+      json(conn, %{room: Serializers.room(room, user: user)})
     end
   end
 
+  # POST /api/rooms/by-code/:code/join
+  # Sala privada: quem entra pelo código/link fica "pending" até o admin liberar.
   def join(conn, %{"code" => code}) do
-    case Guardian.Plug.current_resource(conn) do
-      nil ->
-        unauthorized(conn)
+    user = current_user(conn)
 
-      user ->
-        case Rooms.join_room_by_code(code, user) do
-          {:ok, room, participant} ->
-            joined_at =
-              cond do
-                Map.has_key?(participant, :joined_at) and not is_nil(participant.joined_at) ->
-                  participant.joined_at
+    with {:ok, room, participant, event} <- Rooms.join_room_by_code(code, user) do
+      if event == :requested, do: notify_owner_of_request(room, user)
 
-                Map.has_key?(participant, :inserted_at) and not is_nil(participant.inserted_at) ->
-                  participant.inserted_at
-
-                true ->
-                  DateTime.utc_now()
-              end
-
-            json(conn, %{
-              message: "joined",
-              room: room_json(room),
-              participant: %{
-                id: participant.id,
-                role: participant.role,
-                user_id: participant.user_id,
-                joined_at: joined_at
-              }
-            })
-
-          {:error, :room_not_found} ->
-            conn
-            |> put_status(:not_found)
-            |> json(%{
-              error: "room_not_found",
-              message: "Nenhuma sala encontrada com esse código.",
-              status: 404,
-              how_to_fix: "Confira o código e tente novamente."
-            })
-
-          {:error, :room_inactive, _room} ->
-            conn
-            |> put_status(:gone)
-            |> json(%{
-              error: "room_inactive",
-              message: "Essa sala existe, mas está desativada.",
-              status: 410,
-              how_to_fix: "Peça para o criador reativar ou crie uma nova sala."
-            })
-
-          {:error, :already_joined, _changeset} ->
-            conn
-            |> put_status(:conflict)
-            |> json(%{
-              error: "already_joined",
-              message: "Você já está nessa sala.",
-              status: 409,
-              how_to_fix:
-                "Se quiser entrar de novo, implemente um endpoint de sair (leave) e tente novamente."
-            })
-        end
+      json(conn, %{
+        message: if(participant.status == "approved", do: "joined", else: "waiting_approval"),
+        status: participant.status,
+        room: Serializers.room(room, user: user),
+        participant: %{
+          id: participant.id,
+          role: participant.role,
+          user_id: participant.user_id,
+          joined_at: participant.joined_at || participant.inserted_at
+        }
+      })
     end
   end
+
+  # GET /api/rooms/by-code/:code/access — usado para "aguardar aprovação" sem reenviar o pedido
+  def access(conn, %{"code" => code}) do
+    user = current_user(conn)
+
+    with {:ok, room} <- Rooms.get_room_by_code_active(code) do
+      json(conn, %{status: Rooms.access_status(room, user)})
+    end
+  end
+
+  # GET /api/rooms/by-code/:code/requests — só o admin
+  def requests(conn, %{"code" => code}) do
+    user = current_user(conn)
+
+    with {:ok, room} <- fetch_owned_by_code(code, user) do
+      json(conn, %{requests: Rooms.list_pending_requests(room)})
+    end
+  end
+
+  def approve_request(conn, %{"code" => code, "user_id" => target}),
+    do: resolve_request(conn, code, target, :approve)
+
+  def deny_request(conn, %{"code" => code, "user_id" => target}),
+    do: resolve_request(conn, code, target, :deny)
+
+  defp resolve_request(conn, code, target, action) do
+    user = current_user(conn)
+
+    with {:ok, room} <- fetch_owned_by_code(code, user),
+         {:ok, target_id} <- cast_uuid(target),
+         {:ok, _participant} <- apply_request_action(action, room, target_id) do
+      event = if action == :approve, do: "join:approved", else: "join:denied"
+
+      ChamaApiWeb.Endpoint.broadcast("user:" <> target_id, event, %{
+        room_code: room.code,
+        room_name: room.name
+      })
+
+      json(conn, %{message: if(action == :approve, do: "approved", else: "denied")})
+    end
+  end
+
+  defp apply_request_action(:approve, room, target_id), do: Rooms.approve_request(room, target_id)
+  defp apply_request_action(:deny, room, target_id), do: Rooms.deny_request(room, target_id)
+
+  defp cast_uuid(value) do
+    case Ecto.UUID.cast(value) do
+      {:ok, id} -> {:ok, id}
+      :error -> {:error, :request_not_found}
+    end
+  end
+
+  defp fetch_owned_by_code(code, user) do
+    with {:ok, room} <- Rooms.get_room_by_code_active(code) do
+      if room.kind == "private" and Rooms.owner?(room, user),
+        do: {:ok, room},
+        else: {:error, :forbidden}
+    end
+  end
+
+  # Avisa o admin em tempo real (canal pessoal), em qualquer tela do app.
+  defp notify_owner_of_request(%Room{created_by_id: owner_id} = room, user)
+       when is_binary(owner_id) do
+    ChamaApiWeb.Endpoint.broadcast("user:" <> owner_id, "join:request", %{
+      room_code: room.code,
+      room_name: room.name,
+      user: Serializers.public_user(user)
+    })
+  end
+
+  defp notify_owner_of_request(_room, _user), do: :ok
 
   def leave(conn, %{"code" => code}) do
-    case Guardian.Plug.current_resource(conn) do
-      nil ->
-        unauthorized(conn)
+    user = current_user(conn)
 
-      user ->
-        with %Room{} = room <- Rooms.get_room_by_code(code),
-             true <- room.is_active || {:error, :room_inactive},
-             {:ok, _participant} <- Rooms.leave_room(room, user) do
-          json(conn, %{message: "left"})
-        else
-          nil ->
-            conn |> put_status(:not_found) |> json(%{error: "room_not_found"})
-
-          {:error, :room_inactive} ->
-            conn |> put_status(:gone) |> json(%{error: "room_inactive"})
-
-          {:error, :not_in_room} ->
-            conn |> put_status(:conflict) |> json(%{error: "not_in_room"})
-        end
+    with {:ok, room} <- Rooms.get_room_by_code_active(code),
+         {:ok, _participant} <- Rooms.leave_room(room, user) do
+      json(conn, %{message: "left"})
     end
   end
 
   def participants_by_code(conn, %{"code" => code}) do
-    with %Room{} = room <- Rooms.get_room_by_code(code) do
-      participants = Rooms.list_active_participants(room.id)
+    user = current_user(conn)
 
+    with {:ok, room} <- Rooms.get_room_by_code_active(code),
+         :ok <- ensure_can_view(room, user) do
       json(conn, %{
         room: %{id: room.id, code: room.code, name: room.name},
-        participants:
-          Enum.map(participants, fn p ->
-            joined_at =
-              cond do
-                Map.has_key?(p, :joined_at) and not is_nil(p.joined_at) -> p.joined_at
-                Map.has_key?(p, :inserted_at) and not is_nil(p.inserted_at) -> p.inserted_at
-                true -> nil
-              end
-
-            %{
-              id: p.id,
-              user_id: p.user_id,
-              role: p.role,
-              joined_at: joined_at
-            }
-          end)
+        participants: Rooms.list_active_participants(room.id)
       })
-    else
-      nil ->
-        conn |> put_status(:not_found) |> json(%{error: "room_not_found"})
+    end
+  end
+
+  def participants(conn, %{"id" => id}) do
+    user = current_user(conn)
+
+    with {:ok, room} <- fetch_visible_room(id, user) do
+      json(conn, %{
+        room: %{id: room.id, code: room.code, name: room.name},
+        participants: Rooms.list_active_participants(room.id)
+      })
+    end
+  end
+
+  # GET /api/rooms/by-code/:code/messages?limit=50
+  def messages(conn, %{"code" => code} = params) do
+    user = current_user(conn)
+
+    with {:ok, room} <- Rooms.get_room_by_code_active(code),
+         :ok <- ensure_can_view(room, user) do
+      json(conn, %{messages: Rooms.list_messages(room, parse_limit(params["limit"]))})
     end
   end
 
   # --------------------
   # helpers
   # --------------------
-  defp unauthorized(conn) do
-    conn
-    |> put_status(:unauthorized)
-    |> json(%{
-      error: "unauthorized",
-      message: "Você precisa estar autenticado para fazer isso.",
-      status: 401,
-      how_to_fix: "Envie o token JWT no header Authorization: Bearer <token>."
-    })
+
+  defp current_user(conn), do: Guardian.Plug.current_resource(conn)
+
+  defp ensure_can_view(room, user) do
+    if Rooms.can_view?(room, user), do: :ok, else: {:error, :forbidden}
   end
 
-  defp room_json(room) do
-    %{
-      id: room.id,
-      name: room.name,
-      code: room.code,
-      is_active: room.is_active,
-      created_by_id: room.created_by_id,
-      inserted_at: room.inserted_at
-    }
+  # 404 (e não 403) para salas privadas alheias: não revela que a sala existe.
+  defp fetch_visible_room(id, user) do
+    with %Room{} = room <- Rooms.get_room(id),
+         true <- Rooms.can_view?(room, user) do
+      {:ok, room}
+    else
+      _ -> {:error, :not_found}
+    end
   end
+
+  defp fetch_owned_room(id, user) do
+    with {:ok, room} <- fetch_visible_room(id, user) do
+      if room.kind != "general" and Rooms.owner?(room, user),
+        do: {:ok, room},
+        else: {:error, :forbidden}
+    end
+  end
+
+  defp parse_limit(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {n, ""} -> n
+      _ -> 50
+    end
+  end
+
+  defp parse_limit(_), do: 50
 end

@@ -39,10 +39,11 @@ config :logger, :default_formatter,
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason
 
+config :chama_api, ChamaApi.Auth.Guardian, issuer: "chama_api"
+
+# Origens permitidas no CORS (sobrescritas por CORS_ORIGINS em runtime.exs)
+config :chama_api, :cors_origins, ["http://localhost:5173", "http://127.0.0.1:5173"]
+
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.
 import_config "#{config_env()}.exs"
-
-config :chama_api, ChamaApi.Auth.Guardian,
-  issuer: "chama_api",
-  secret_key: System.get_env("GUARDIAN_SECRET_KEY") || "dev_secret_change_me"

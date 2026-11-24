@@ -12,6 +12,17 @@ A Chama API é responsável por:
 
 ---
 
+## ⚡ Rodar em um comando (sem Docker)
+
+```bash
+./run.sh            # instala o que faltar (Arch), sobe o Postgres, migra, popula e inicia a API
+./run.sh --reset    # igual, mas apagando e recriando o banco de desenvolvimento antes
+```
+
+A API sobe em `http://localhost:4000`. Usuário de teste: `admin@chama.local` / `Admin123!@#`.
+
+---
+
 ## 📦 Requisitos
 
 ### Obrigatórios
@@ -138,20 +149,22 @@ docker compose up -d
 
 ---
 
-## 🔐 Variáveis de Ambiente úteis
+## 🔐 Variáveis de Ambiente
 
-A maioria das configs está em config/dev.exs, mas você pode sobrescrever em runtime com variáveis:
+Em desenvolvimento tudo tem padrão (veja `.env.example`). Em produção, só `DATABASE_URL`,
+`SECRET_KEY_BASE`, `GUARDIAN_SECRET_KEY` e `CORS_ORIGINS` são obrigatórias (o app não sobe sem elas).
 
-```bash
-export DATABASE_URL="ecto://chama_admin:abacate@localhost:5432/chama_api_dev"
-export SECRET_KEY_BASE=$(mix phx.gen.secret)
-```
+| Variável | Para quê |
+| --- | --- |
+| `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | Login com GitHub (OAuth App). Sem elas, `POST /api/auth/github` responde 503. |
+| `GUARDIAN_SECRET_KEY` | Assina os JWT. Gere com `mix guardian.gen.secret`. **Obrigatória em prod.** |
+| `CORS_ORIGINS` | Origens do front (CORS **e** WebSocket), separadas por vírgula. Ex.: `https://chama.exemplo.com` |
+| `DATABASE_URL`, `SECRET_KEY_BASE`, `PHX_HOST`, `PORT` | Padrão do Phoenix (produção). |
 
 Para testes:
 
 ```bash
-export MIX_ENV=test
-mix ecto.create && mix ecto.migrate && mix test
+MIX_ENV=test mix ecto.create && mix ecto.migrate && mix test
 ```
 
 ---
@@ -223,83 +236,67 @@ config :chama_api, ChamaApi.Repo,
 
 ---
 
-## 🌐 Endpoints e exemplos (curl)
+## 🌐 Endpoints
 
-Rotas principais podem ser vistas em:
+Autenticação: `Authorization: Bearer <token>` (exceto as rotas públicas).
 
-```bash
-rg "scope\s|pipe_through|resources|post\s|get\s|put\s|patch\s|delete\s" lib/chama_api_web/router.ex || true
-```
+| Método | Rota | O que faz |
+| --- | --- | --- |
+| POST | `/api/register` | Cria conta `{ user: { name, email, password } }` (senha 8–72, com letra e número) |
+| POST | `/api/login` | `{ email, password }` → `{ token, user }` |
+| POST | `/api/auth/github` | `{ code, redirect_uri }` → `{ token, user }` (web e mobile usam o mesmo endpoint) |
+| GET | `/api/me` | Usuário logado |
+| GET | `/api/rooms` | Sala geral + salas privadas **em que você está** (com `participants_count`) |
+| POST | `/api/rooms` | Cria sala privada `{ room: { name } }` (você vira `host`) |
+| GET | `/api/rooms/general` | Sala geral |
+| GET | `/api/rooms/by-code/:code` | Dados da sala |
+| POST | `/api/rooms/by-code/:code/join` | Entra na sala (o código é o convite; idempotente) |
+| POST | `/api/rooms/by-code/:code/leave` | Sai da sala |
+| GET | `/api/rooms/by-code/:code/participants` | Participantes ativos (com nome e avatar) |
+| GET | `/api/rooms/by-code/:code/messages?limit=50` | Histórico do chat |
+| PATCH / DELETE | `/api/rooms/:id` | Editar/apagar — **só o dono**, nunca a sala geral |
 
-Fluxo típico de autenticação + salas (exemplos):
-
-1. Criar usuário
-
-```bash
-curl -X POST http://localhost:4000/api/users \
-  -H 'Content-Type: application/json' \
-  -d '{"user": {"email": "alice@example.com", "password": "pass123"}}'
-```
-
-2. Login para obter JWT
-
-```bash
-curl -X POST http://localhost:4000/api/auth/login \
-  -H 'Content-Type: application/json' \
-  -d '{"email": "alice@example.com", "password": "pass123"}'
-# resposta esperada: {"token": "<JWT>"}
-```
-
-Guarde o token:
+Exemplo:
 
 ```bash
-TOKEN="<cole_o_token_aqui>"
+curl -s -X POST http://localhost:4000/api/login -H 'Content-Type: application/json' \
+  -d '{"email":"admin@chama.local","password":"Admin123!@#"}'
+TOKEN="<cole_o_token>"
+curl -s -X POST http://localhost:4000/api/rooms -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -d '{"room":{"name":"Daily"}}'
 ```
 
-3. Criar sala
-
-```bash
-curl -X POST http://localhost:4000/api/rooms \
-  -H "Authorization: Bearer $TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{"room": {"name": "Daily", "is_private": false}}'
-```
-
-4. Listar salas
-
-```bash
-curl -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/rooms
-```
-
-5. Entrar na sala (sinalização/WebRTC normalmente ocorre via websockets, aqui apenas REST de exemplo)
-
-```bash
-curl -X POST http://localhost:4000/api/rooms/<room_id>/join \
-  -H "Authorization: Bearer $TOKEN"
-```
-
-Observação: As rotas exatas dependem do router atual em lib/chama_api_web/router.ex.
+Erros seguem `{ error: "codigo", message: "texto em português", status }`; validações trazem `fields`.
 
 ---
 
 ## 🧩 WebSockets
 
-- Conecte no endpoint do Phoenix Socket (ver lib/chama_api_web/endpoint.ex e router).
-- Canais (channels) e tópicos podem ser expostos para chat e sinalização WebRTC.
-- Exemplo de JS mínimo (substitua o caminho correto do socket):
+Conecte em `ws://localhost:4000/socket/websocket?token=<JWT>` (o Phoenix JS acrescenta `/websocket`).
+
+| Canal | Para quê |
+| --- | --- |
+| `user:<meu_id>` | Canal pessoal: recebe `invite:incoming`, `invite:accepted`, `invite:declined` |
+| `lobby:global` | Presença global (quem está online) e envio de convites: `invite:send {to, room_code}`, `invite:accept`, `invite:decline` |
+| `room:<code>` | Sala (`room:geral` é a sala geral) |
+
+Eventos do `room:<code>`:
+
+- `chat:new {body}` → todos recebem `chat:message` (salvo no banco; nome/avatar vêm do servidor)
+- `call:join` → responde `{peers: [ids]}` de quem já está na chamada (máx. 6 pessoas); `call:leave`; `call:media {mic, cam}`
+- `signal:offer | signal:answer {to, sdp}`, `signal:ice {to, candidate}` → entregues **só** ao `to`
+- Presença: `presence_state` / `presence_diff` com `name`, `avatar_url`, `in_call`, `mic`, `cam`
 
 ```javascript
 import { Socket } from "phoenix";
 
-const token = localStorage.getItem("jwt");
 const socket = new Socket("ws://localhost:4000/socket", { params: { token } });
 socket.connect();
 
-const channel = socket.channel("room:ROOM_ID", {});
-channel
-  .join()
-  .receive("ok", (resp) => console.log("joined", resp))
-  .receive("error", (err) => console.error("join error", err));
+const channel = socket.channel("room:geral", {});
+channel.join().receive("ok", () => console.log("na sala geral"));
+channel.on("chat:message", (m) => console.log(m.user_name, m.body));
+channel.push("chat:new", { body: "oi!" });
 ```
 
 ---

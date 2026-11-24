@@ -1,42 +1,24 @@
-alias ChamaApi.Repo
-alias ChamaApi.Accounts
+# Rode com: mix run priv/repo/seeds.exs   (ou `mix ecto.setup`)
+alias ChamaApi.{Accounts, Repo, Rooms}
 alias ChamaApi.Accounts.User
+
+# A sala geral é criada sob demanda, mas já deixamos pronta.
+Rooms.ensure_general_room()
+IO.puts("🏛️  Sala geral pronta (código: #{Rooms.general_code()})")
 
 email = System.get_env("SEED_ADMIN_EMAIL") || "admin@chama.local"
 password = System.get_env("SEED_ADMIN_PASSWORD") || "Admin123!@#"
 name = System.get_env("SEED_ADMIN_NAME") || "Chama Admin"
 
-attrs = %{
-  email: email,
-  password: password,
-  name: name,
-  role: "admin"
-}
-
-user =
-  Repo.get_by(User, email: email)
-
-case user do
+case Repo.get_by(User, email: email) do
   nil ->
-    IO.puts("👤 Criando admin seed: #{email}")
+    IO.puts("👤 Criando usuário de desenvolvimento: #{email}")
 
-    case Accounts.register_user(attrs) do
-      {:ok, _u} -> IO.puts("✅ Admin criado com sucesso.")
+    case Accounts.register_user(%{email: email, password: password, name: name}) do
+      {:ok, _user} -> IO.puts("✅ Usuário criado.")
       {:error, changeset} -> IO.inspect(changeset.errors, label: "❌ Erros")
     end
 
-  %User{} = u ->
-    IO.puts("♻️ Admin já existe, garantindo senha/role...")
-
-    # Ajuste conforme suas funções:
-    u
-    |> User.admin_seed_changeset(%{name: name, role: "admin"})
-    |> Repo.update!()
-
-    # Se sua atualização de senha for separada, use a função correta.
-    # Exemplo genérico:
-    case Accounts.update_user_password(u, %{password: password}) do
-      {:ok, _} -> IO.puts("✅ Senha do admin atualizada.")
-      {:error, changeset} -> IO.inspect(changeset.errors, label: "❌ Erros senha")
-    end
+  %User{} ->
+    IO.puts("♻️  #{email} já existe, nada a fazer.")
 end

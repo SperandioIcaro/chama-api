@@ -23,6 +23,22 @@ end
 config :chama_api, ChamaApiWeb.Endpoint,
   http: [port: String.to_integer(System.get_env("PORT", "4000"))]
 
+# Login com GitHub (OAuth App). Sem isso, POST /api/auth/github responde 503.
+config :chama_api, :github,
+  client_id: System.get_env("GITHUB_CLIENT_ID"),
+  client_secret: System.get_env("GITHUB_CLIENT_SECRET")
+
+# Origens do front (CORS e WebSocket), separadas por vírgula.
+# Ex.: CORS_ORIGINS=https://chama.exemplo.com,http://localhost:5173
+cors_origins =
+  case System.get_env("CORS_ORIGINS") do
+    nil -> nil
+    "" -> nil
+    value -> value |> String.split(",", trim: true) |> Enum.map(&String.trim/1)
+  end
+
+if cors_origins, do: config(:chama_api, :cors_origins, cors_origins)
+
 if config_env() == :prod do
   database_url =
     System.get_env("DATABASE_URL") ||
@@ -56,6 +72,25 @@ if config_env() == :prod do
   host = System.get_env("PHX_HOST") || "example.com"
 
   config :chama_api, :dns_cluster_query, System.get_env("DNS_CLUSTER_QUERY")
+
+  guardian_secret =
+    System.get_env("GUARDIAN_SECRET_KEY") ||
+      raise """
+      environment variable GUARDIAN_SECRET_KEY is missing.
+      You can generate one by calling: mix guardian.gen.secret
+      """
+
+  config :chama_api, ChamaApi.Auth.Guardian,
+    issuer: "chama_api",
+    secret_key: guardian_secret
+
+  config :chama_api, ChamaApiWeb.Endpoint,
+    check_origin:
+      cors_origins ||
+        raise("""
+        environment variable CORS_ORIGINS is missing.
+        For example: CORS_ORIGINS=https://chama.exemplo.com
+        """)
 
   config :chama_api, ChamaApiWeb.Endpoint,
     url: [host: host, port: 443, scheme: "https"],

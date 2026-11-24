@@ -1,20 +1,6 @@
 defmodule ChamaApiWeb.Endpoint do
   use Phoenix.Endpoint, otp_app: :chama_api
 
-  # The session will be stored in the cookie and signed,
-  # this means its contents can be read but not tampered with.
-  # Set :encryption_salt if you would also like to encrypt it.
-  @session_options [
-    store: :cookie,
-    key: "_chama_api_key",
-    signing_salt: "N4Xx33cw",
-    same_site: "Lax"
-  ]
-
-  socket "/live", Phoenix.LiveView.Socket,
-    websocket: [connect_info: [session: @session_options]],
-    longpoll: [connect_info: [session: @session_options]]
-
   socket "/socket", ChamaApiWeb.UserSocket,
     websocket: true,
     longpoll: false
@@ -38,28 +24,21 @@ defmodule ChamaApiWeb.Endpoint do
     plug Phoenix.Ecto.CheckRepoStatus, otp_app: :chama_api
   end
 
-  plug Phoenix.LiveDashboard.RequestLogger,
-    param_key: "request_logger",
-    cookie_key: "request_logger"
-
   plug Plug.RequestId
-  plug Plug.Telemetry, event_prefix: [:phoenix, :endpoint]
+  # Em dev o log de requisições é o CompactLogger (config :chama_api, request_log: false).
+  plug Plug.Telemetry,
+    event_prefix: [:phoenix, :endpoint],
+    log: Application.compile_env(:chama_api, :request_log, :info)
 
+  # API 100% JSON com token no header: sem cookie de sessão, sem multipart.
   plug Plug.Parsers,
-    parsers: [:urlencoded, :multipart, :json],
-    pass: ["*/*"],
+    parsers: [:json],
+    pass: ["application/json"],
     json_decoder: Phoenix.json_library()
 
-  plug Plug.MethodOverride
   plug Plug.Head
-  plug Plug.Session, @session_options
 
-  plug CORSPlug,
-    origin: ["http://localhost:5173"],
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    headers: ["Authorization", "Content-Type", "Accept"],
-    expose: ["Authorization"],
-    max_age: 86400
+  plug ChamaApiWeb.Plugs.Cors
 
   plug ChamaApiWeb.Router
 end

@@ -48,6 +48,61 @@ defmodule ChamaApiWeb.FallbackController do
   end
 
   # -------------------------
+  # PAYLOAD / OAuth (400 / 401 / 502 / 503)
+  # -------------------------
+  def call(conn, {:error, :user_payload_required}) do
+    error(conn, :unprocessable_entity, "validation_error",
+      "Envie os dados no formato { user: { name, email, password } }.")
+  end
+
+  def call(conn, {:error, :room_payload_required}) do
+    error(conn, :unprocessable_entity, "validation_error",
+      "Envie os dados no formato { room: { name } }.")
+  end
+
+  def call(conn, {:error, :github_code_required}) do
+    error(conn, :bad_request, "github_code_required", "Envie o `code` devolvido pelo GitHub.")
+  end
+
+  def call(conn, {:error, {:github_oauth, _reason}}) do
+    error(conn, :unauthorized, "github_invalid_code",
+      "Código do GitHub inválido ou expirado. Tente entrar de novo.")
+  end
+
+  def call(conn, {:error, :github_not_configured}) do
+    error(conn, :service_unavailable, "github_not_configured",
+      "Login com GitHub não está configurado neste servidor.")
+  end
+
+  def call(conn, {:error, {kind, _detail}}) when kind in [:github_http, :github_unreachable] do
+    error(conn, :bad_gateway, "github_unavailable",
+      "Não consegui falar com o GitHub agora. Tente de novo em instantes.")
+  end
+
+  # -------------------------
+  # SALAS (403 / 404 / 409 / 410)
+  # -------------------------
+  def call(conn, {:error, :forbidden}) do
+    error(conn, :forbidden, "forbidden", "Você não tem permissão para fazer isso.")
+  end
+
+  def call(conn, {:error, :room_not_found}) do
+    error(conn, :not_found, "room_not_found", "Nenhuma sala encontrada com esse código.")
+  end
+
+  def call(conn, {:error, :room_inactive}) do
+    error(conn, :gone, "room_inactive", "Essa sala existe, mas está desativada.")
+  end
+
+  def call(conn, {:error, :request_not_found}) do
+    error(conn, :not_found, "request_not_found", "Esse pedido não existe mais (talvez já tenha sido respondido).")
+  end
+
+  def call(conn, {:error, :not_in_room}) do
+    error(conn, :conflict, "not_in_room", "Você não está nessa sala.")
+  end
+
+  # -------------------------
   # NOT FOUND (404)
   # -------------------------
   def call(conn, {:error, :not_found}) do
@@ -77,6 +132,12 @@ defmodule ChamaApiWeb.FallbackController do
   # -------------------------
   # Helpers
   # -------------------------
+  defp error(conn, status, code, message) do
+    conn
+    |> put_status(status)
+    |> json(%{error: code, message: message, status: Plug.Conn.Status.code(status)})
+  end
+
   defp humanize_errors(changeset) do
     Ecto.Changeset.traverse_errors(changeset, fn {msg, opts} ->
       msg = interpolate_msg(msg, opts)
@@ -92,5 +153,7 @@ defmodule ChamaApiWeb.FallbackController do
 
   defp pretty_msg("can't be blank"), do: "é obrigatório"
   defp pretty_msg("should be at least " <> rest), do: "deve ter no mínimo " <> rest
+  defp pretty_msg("should be at most " <> rest), do: "deve ter no máximo " <> rest
+  defp pretty_msg("has already been taken"), do: "já está em uso"
   defp pretty_msg(other), do: other
 end

@@ -2,62 +2,115 @@ defmodule ChamaApi.AccountsTest do
   use ChamaApi.DataCase
 
   alias ChamaApi.Accounts
+  alias ChamaApi.Accounts.User
 
-  describe "users" do
-    alias ChamaApi.Accounts.User
+  import ChamaApi.AccountsFixtures
 
-    import ChamaApi.AccountsFixtures
+  describe "register_user/1" do
+    test "cria usuário com senha criptografada e email normalizado" do
+      assert {:ok, %User{} = user} =
+               Accounts.register_user(%{
+                 name: "  Maria   Silva ",
+                 email: "  Maria@Example.COM ",
+                 password: "senha1234"
+               })
 
-    @invalid_attrs %{email: nil, name: nil, password_hash: nil}
-
-    test "list_users/0 returns all users" do
-      user = user_fixture()
-      assert Accounts.list_users() == [user]
+      assert user.name == "Maria Silva"
+      assert user.email == "maria@example.com"
+      assert user.password_hash != "senha1234"
+      assert is_nil(user.github_id)
     end
 
-    test "get_user!/1 returns the user with given id" do
-      user = user_fixture()
-      assert Accounts.get_user!(user.id) == user
+    test "rejeita senha fraca" do
+      assert {:error, cs} = Accounts.register_user(valid_user_attrs(%{password: "curta1"}))
+      assert %{password: [_ | _]} = errors_on(cs)
+
+      assert {:error, cs} = Accounts.register_user(valid_user_attrs(%{password: "somenteletras"}))
+      assert "precisa ter ao menos um número" in errors_on(cs).password
+
+      assert {:error, cs} = Accounts.register_user(valid_user_attrs(%{password: "12345678"}))
+      assert "precisa ter ao menos uma letra" in errors_on(cs).password
     end
 
-    test "create_user/1 with valid data creates a user" do
-      valid_attrs = %{email: "some email", name: "some name", password_hash: "some password_hash"}
+    test "rejeita email inválido e duplicado (ignorando maiúsculas)" do
+      assert {:error, cs} = Accounts.register_user(valid_user_attrs(%{email: "isso-nao-e-email"}))
+      assert %{email: [_ | _]} = errors_on(cs)
 
-      assert {:ok, %User{} = user} = Accounts.create_user(valid_attrs)
-      assert user.email == "some email"
-      assert user.name == "some name"
-      assert user.password_hash == "some password_hash"
+      user = user_fixture(%{email: "dup@example.com"})
+      assert {:error, cs} = Accounts.register_user(valid_user_attrs(%{email: "DUP@example.com"}))
+      assert "já está em uso" in errors_on(cs).email
+      assert user.email == "dup@example.com"
+    end
+  end
+
+  describe "authenticate_user/2" do
+    test "aceita credenciais corretas (email sem diferenciar maiúsculas)" do
+      user = user_fixture(%{email: "login@example.com", password: "senha1234"})
+
+      assert {:ok, found} = Accounts.authenticate_user("LOGIN@example.com", "senha1234")
+      assert found.id == user.id
     end
 
-    test "create_user/1 with invalid data returns error changeset" do
-      assert {:error, %Ecto.Changeset{}} = Accounts.create_user(@invalid_attrs)
+    test "recusa senha errada, usuário inexistente e conta só-GitHub" do
+      user_fixture(%{email: "login@example.com", password: "senha1234"})
+
+      assert {:error, :invalid_credentials} =
+               Accounts.authenticate_user("login@example.com", "errada123")
+
+      assert {:error, :invalid_credentials} =
+               Accounts.authenticate_user("ninguem@example.com", "senha1234")
+
+      {:ok, _gh} =
+        Accounts.upsert_github_user(%{
+          "id" => 99,
+          "login" => "octo",
+          "email" => "octo@example.com"
+        })
+
+      assert {:error, :invalid_credentials} =
+               Accounts.authenticate_user("octo@example.com", "qualquer123")
+    end
+  end
+
+  describe "upsert_github_user/1" do
+    test "cria na primeira vez e reaproveita nas seguintes" do
+      profile = %{
+        "id" => 1234,
+        "login" => "octocat",
+        "name" => "The Octocat",
+        "avatar_url" => "https://a/1.png"
+      }
+
+      assert {:ok, user} = Accounts.upsert_github_user(profile)
+      assert user.name == "The Octocat"
+      assert user.github_login == "octocat"
+
+      assert {:ok, again} =
+               Accounts.upsert_github_user(%{profile | "avatar_url" => "https://a/2.png"})
+
+      assert again.id == user.id
+      assert again.avatar_url == "https://a/2.png"
     end
 
-    test "update_user/2 with valid data updates the user" do
-      user = user_fixture()
-      update_attrs = %{email: "some updated email", name: "some updated name", password_hash: "some updated password_hash"}
+    test "usa o login quando o GitHub não informa nome" do
+      assert {:ok, user} =
+               Accounts.upsert_github_user(%{"id" => 7, "login" => "semnome", "name" => nil})
 
-      assert {:ok, %User{} = user} = Accounts.update_user(user, update_attrs)
-      assert user.email == "some updated email"
-      assert user.name == "some updated name"
-      assert user.password_hash == "some updated password_hash"
+      assert user.name == "semnome"
     end
 
-    test "update_user/2 with invalid data returns error changeset" do
-      user = user_fixture()
-      assert {:error, %Ecto.Changeset{}} = Accounts.update_user(user, @invalid_attrs)
-      assert user == Accounts.get_user!(user.id)
-    end
+    test "não toma conta de email já cadastrado com senha" do
+      existing = user_fixture(%{email: "dono@example.com"})
 
-    test "delete_user/1 deletes the user" do
-      user = user_fixture()
-      assert {:ok, %User{}} = Accounts.delete_user(user)
-      assert_raise Ecto.NoResultsError, fn -> Accounts.get_user!(user.id) end
-    end
+      assert {:ok, gh_user} =
+               Accounts.upsert_github_user(%{
+                 "id" => 5,
+                 "login" => "intruso",
+                 "email" => "dono@example.com"
+               })
 
-    test "change_user/1 returns a user changeset" do
-      user = user_fixture()
-      assert %Ecto.Changeset{} = Accounts.change_user(user)
+      assert gh_user.id != existing.id
+      assert is_nil(gh_user.email)
     end
   end
 end

@@ -8,6 +8,8 @@ config :chama_api, ChamaApi.Repo,
   database: "chama_api_dev",
   stacktrace: true,
   show_sensitive_data_on_connection_error: true,
+  # sem log das queries SQL no terminal
+  log: false,
   pool_size: 10
 
 # For development, we disable any cache and enable
@@ -52,8 +54,13 @@ config :chama_api, ChamaApiWeb.Endpoint,
 # Enable dev routes for dashboard and mailbox
 config :chama_api, dev_routes: true
 
-# Do not include metadata nor timestamps in development logs
-config :logger, :default_formatter, format: "[$level] $message\n"
+# ── Terminal enxuto ──────────────────────────────────────────────────────────
+# Uma linha por requisição ("GET /api/rooms  200 3ms"), sem SQL, sem "Processing with…".
+# Para voltar ao log detalhado: remova este bloco (ou use level: :debug).
+config :logger, level: :info
+config :logger, :default_formatter, format: "$time $message\n", metadata: []
+config :phoenix, :logger, false
+config :chama_api, request_log: false, compact_log: true, compact_log_colors: true
 
 # Set a higher stacktrace during development. Avoid configuring such
 # in production as building large stacktraces may be expensive.

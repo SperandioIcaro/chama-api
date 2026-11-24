@@ -1,26 +1,23 @@
 defmodule ChamaApi.AccountsFixtures do
   @moduledoc """
-  This module defines test helpers for creating
-  entities via the `ChamaApi.Accounts` context.
+  Helpers de teste para `ChamaApi.Accounts`.
   """
 
-  @doc """
-  Generate a unique user email.
-  """
-  def unique_user_email, do: "some email#{System.unique_integer([:positive])}"
+  def unique_user_email, do: "user#{System.unique_integer([:positive])}@example.com"
 
-  @doc """
-  Generate a user.
-  """
+  def valid_user_attrs(attrs \\ %{}) do
+    Enum.into(attrs, %{
+      name: "Fulana de Tal",
+      email: unique_user_email(),
+      password: "senha1234"
+    })
+  end
+
   def user_fixture(attrs \\ %{}) do
     {:ok, user} =
       attrs
-      |> Enum.into(%{
-        email: unique_user_email(),
-        name: "some name",
-        password_hash: "some password_hash"
-      })
-      |> ChamaApi.Accounts.create_user()
+      |> valid_user_attrs()
+      |> ChamaApi.Accounts.register_user()
 
     user
   end

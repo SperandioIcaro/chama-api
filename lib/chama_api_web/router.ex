@@ -15,6 +15,7 @@ defmodule ChamaApiWeb.Router do
     # Públicas
     post "/register", AuthController, :register
     post "/login", AuthController, :login
+    post "/auth/github", AuthController, :github
   end
 
   scope "/api", ChamaApiWeb do
@@ -27,10 +28,18 @@ defmodule ChamaApiWeb.Router do
     get "/rooms", RoomController, :index
     post "/rooms", RoomController, :create
 
+    # (precisa vir antes de "/rooms/:id")
+    get "/rooms/general", RoomController, :general
+
     get "/rooms/by-code/:code", RoomController, :by_code
     post "/rooms/by-code/:code/join", RoomController, :join
     post "/rooms/by-code/:code/leave", RoomController, :leave
+    get "/rooms/by-code/:code/access", RoomController, :access
+    get "/rooms/by-code/:code/requests", RoomController, :requests
+    post "/rooms/by-code/:code/requests/:user_id/approve", RoomController, :approve_request
+    post "/rooms/by-code/:code/requests/:user_id/deny", RoomController, :deny_request
     get "/rooms/by-code/:code/participants", RoomController, :participants_by_code
+    get "/rooms/by-code/:code/messages", RoomController, :messages
 
     get "/rooms/:id", RoomController, :show
     patch "/rooms/:id", RoomController, :update

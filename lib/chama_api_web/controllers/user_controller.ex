@@ -1,23 +1,17 @@
 defmodule ChamaApiWeb.UserController do
   use ChamaApiWeb, :controller
 
-  def me(conn, _params) do
-    user = Guardian.Plug.current_resource(conn)
+  alias ChamaApiWeb.Serializers
 
-    case user do
+  def me(conn, _params) do
+    case Guardian.Plug.current_resource(conn) do
       nil ->
         conn
         |> put_status(:unauthorized)
         |> json(%{error: "unauthenticated"})
 
       user ->
-        json(conn, %{
-          user: %{
-            id: user.id,
-            email: user.email,
-            name: Map.get(user, :name)
-          }
-        })
+        json(conn, %{user: Serializers.user(user)})
     end
   end
 end

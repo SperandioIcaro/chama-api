@@ -35,3 +35,10 @@ config :phoenix, :plug_init_mode, :runtime
 # Sort query params output of verified routes for robust url comparisons
 config :phoenix,
   sort_verified_routes_query_params: true
+
+config :chama_api, ChamaApi.Auth.Guardian,
+  issuer: "chama_api",
+  secret_key: "test_only_secret_key_never_use_in_prod_0123456789"
+
+# bcrypt mais barato nos testes (em produção segue o padrão seguro)
+config :bcrypt_elixir, log_rounds: 4

@@ -6,6 +6,7 @@ defmodule ChamaApi.Rooms.Participant do
   @foreign_key_type :binary_id
   schema "participants" do
     field :role, :string
+    field :status, :string, default: "approved"
     field :joined_at, :utc_datetime
     field :left_at, :utc_datetime
 
@@ -15,15 +16,14 @@ defmodule ChamaApi.Rooms.Participant do
     timestamps(type: :utc_datetime)
   end
 
+  @statuses ["approved", "pending", "invited", "denied"]
+
   def create_changeset(participant, attrs) do
     participant
-    |> cast(attrs, [:role, :left_at, :room_id, :user_id])
+    |> cast(attrs, [:role, :status, :joined_at, :left_at, :room_id, :user_id])
     |> validate_required([:role, :room_id, :user_id])
     |> validate_inclusion(:role, ["host", "member"])
+    |> validate_inclusion(:status, @statuses)
     |> unique_constraint([:room_id, :user_id], name: :participants_room_user_unique)
-  end
-
-  def join_changeset(participant, attrs) do
-    create_changeset(participant, attrs)
   end
 end
